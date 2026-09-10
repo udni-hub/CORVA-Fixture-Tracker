@@ -20,7 +20,7 @@ app = Flask(__name__)
 app.config.update(
     SECRET_KEY=os.getenv("FLASK_SECRET") or "change-this-secret",
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SECURE=False,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_PATH="/"
 )

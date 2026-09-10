@@ -16,6 +16,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-me")
+ADMIN_RECOVERY_CODE = os.getenv("ADMIN_RECOVERY_CODE", "")
 TABLE = "fixtures"
 
 def headers(): return {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
@@ -52,6 +53,15 @@ def api_login():
     if username==ADMIN_USERNAME and password==ADMIN_PASSWORD:
         session.clear(); session["user"]=username; session["role"]="admin"; return jsonify(ok=True,role="admin")
     return jsonify(ok=False,error="Invalid admin credentials"),401
+@app.post("/api/forgot-password")
+def api_forgot_password():
+    data=request.get_json(silent=True) or {}
+    username=str(data.get("username","")).strip(); code=str(data.get("recovery_code","")).strip(); new_password=str(data.get("new_password", ""))
+    if not ADMIN_RECOVERY_CODE: return jsonify(error="Recovery is not configured yet. Set ADMIN_RECOVERY_CODE in Render Environment."),503
+    if username!=ADMIN_USERNAME or code!=ADMIN_RECOVERY_CODE: return jsonify(error="Invalid recovery details"),401
+    if len(new_password)<8: return jsonify(error="New password must be at least 8 characters"),400
+    os.environ["ADMIN_PASSWORD"]=new_password
+    return jsonify(ok=True,message="Password changed for this running service. Add the same value to ADMIN_PASSWORD in Render Environment to keep it after redeploys.")
 @app.post("/api/logout")
 def api_logout(): session.clear(); return jsonify(ok=True)
 @app.get("/api/session")

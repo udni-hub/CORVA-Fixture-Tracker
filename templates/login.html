@@ -12,29 +12,31 @@
     input,button{width:100%;padding:14px;margin-top:10px;border-radius:12px;font-size:16px}
     input{border:1px solid #cbd5e1;background:#fff}
     button{border:0;background:#0f172a;color:#fff;font-weight:800;cursor:pointer}
-    button:disabled{opacity:.6}
+    .admin{background:#64748b}
     .err{color:#b91c1c;font-size:13px;margin-top:10px}
+    #adminBox{display:none}
   </style>
 </head>
 <body>
   <div class="box">
     <h1>CORVA Tracker</h1>
     <p>Fixture Receiving Cloud App</p>
-    <input id="u" placeholder="Username" autocomplete="username">
-    <input id="p" type="password" placeholder="Password" autocomplete="current-password">
-    <button id="loginBtn" onclick="login()">LOGIN</button>
+
+    <button id="loginBtn" onclick="userLogin()">LOGIN</button>
+    <button class="admin" onclick="showAdmin()">ADMIN LOGIN</button>
+
+    <div id="adminBox">
+      <input id="u" placeholder="Admin Username" autocomplete="username">
+      <input id="p" type="password" placeholder="Admin Password" autocomplete="current-password">
+      <button onclick="adminLogin()">ADMIN LOGIN</button>
+    </div>
     <div id="e" class="err"></div>
   </div>
 
   <script>
-    async function login(){
-      const btn=document.getElementById('loginBtn');
+    async function sendLogin(username,password){
       const err=document.getElementById('e');
-      const username=document.getElementById('u').value.trim();
-      const password=document.getElementById('p').value;
       err.textContent='';
-      if(!username||!password){err.textContent='Enter username and password.';return}
-      btn.disabled=true;
       try{
         const r=await fetch('/api/login',{
           method:'POST',
@@ -46,12 +48,23 @@
         if(x.ok){location.replace('/');}
         else{err.textContent=x.error||'Login failed';}
       }catch(ex){err.textContent='Server connection failed. Please try again.';}
-      finally{btn.disabled=false;}
     }
 
-    document.getElementById('p').addEventListener('keydown',e=>{
-      if(e.key==='Enter') login();
-    });
+    function userLogin(){
+      sendLogin('MTAR','');
+    }
+
+    function showAdmin(){
+      document.getElementById('adminBox').style.display='block';
+      document.getElementById('u').focus();
+    }
+
+    function adminLogin(){
+      const u=document.getElementById('u').value.trim();
+      const p=document.getElementById('p').value;
+      if(!u||!p){document.getElementById('e').textContent='Enter admin username and password.';return;}
+      sendLogin(u,p);
+    }
   </script>
 </body>
 </html>

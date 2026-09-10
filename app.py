@@ -16,7 +16,6 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Render HTTPS/proxy session settings
 app.config.update(
     SECRET_KEY=os.getenv("FLASK_SECRET") or "change-this-secret",
     SESSION_COOKIE_HTTPONLY=True,
@@ -38,8 +37,6 @@ USER_PASSWORD = os.getenv("USER_PASSWORD", "change-me")
 
 TABLE = "fixtures"
 
-
-# ---------------- SUPABASE ----------------
 
 def headers():
     return {
@@ -93,8 +90,6 @@ def sb_delete(row_id):
     r.raise_for_status()
 
 
-# ---------------- CALCULATIONS ----------------
-
 def calc_balance(row):
     total = float(row.get("total_qty") or 0)
     received = float(row.get("received") or 0)
@@ -103,30 +98,22 @@ def calc_balance(row):
 
 def calc_fixture_buildable(rows):
     values = []
-
     for row in rows:
         received = float(row.get("received") or 0)
         bom = float(row.get("bom_qty") or 0)
-
         if bom > 0:
             values.append(math.floor(received / bom))
-
     if not values:
         return 0
-
     return min(values)
 
-
-# ---------------- AUTH ----------------
 
 def require_login(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if not session.get("user"):
             return jsonify({"error": "Login required"}), 401
-
         return fn(*args, **kwargs)
-
     return wrapper
 
 
@@ -135,22 +122,16 @@ def require_admin(fn):
     def wrapper(*args, **kwargs):
         if not session.get("user"):
             return jsonify({"error": "Login required"}), 401
-
         if session.get("role") != "admin":
             return jsonify({"error": "Admin access required"}), 403
-
         return fn(*args, **kwargs)
-
     return wrapper
 
-
-# ---------------- PAGES ----------------
 
 @app.get("/")
 def home():
     if not session.get("user"):
         return redirect(url_for("login"))
-
     return render_template(
         "index.html",
         role=session.get("role"),
@@ -163,41 +144,32 @@ def login():
     return render_template("login.html")
 
 
-# ---------------- LOGIN ----------------
-
 @app.post("/api/login")
 def api_login():
-
     data = request.get_json(silent=True) or {}
-
     username = str(data.get("username", "")).strip()
     password = str(data.get("password", ""))
-
-    # Clear any old session first
     session.clear()
 
+    # Normal user can enter with one click; no password is required.
+    if username == USER_USERNAME and password == "":
+        session["user"] = username
+        session["role"] = "user"
+        return jsonify(ok=True, role="user")
+
+    # Admin remains password protected.
     if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
         session["user"] = username
         session["role"] = "admin"
+        return jsonify(ok=True, role="admin")
 
-        return jsonify(
-            ok=True,
-            role="admin"
-        )
-
+    # Keep the old normal-user password login working as well.
     if username == USER_USERNAME and password == USER_PASSWORD:
         session["user"] = username
         session["role"] = "user"
+        return jsonify(ok=True, role="user")
 
-        return jsonify(
-            ok=True,
-            role="user"
-        )
-
-    return jsonify(
-        ok=False,
-        error="Invalid username or password"
-    ), 401
+    return jsonify(ok=False, error="Invalid username or password"), 401
 
 
 @app.post("/api/logout")
@@ -205,8 +177,6 @@ def api_logout():
     session.clear()
     return jsonify(ok=True)
 
-
-# ---------------- SESSION TEST ----------------
 
 @app.get("/api/session")
 def api_session():
@@ -217,84 +187,54 @@ def api_session():
     )
 
 
-# ---------------- FIXTURE SEARCH ----------------
-
 @app.get("/api/fixtures")
 @require_login
 def api_fixtures():
-
     sheet = request.args.get("sheet", "").strip()
     fixture = request.args.get("fixture", "").strip()
-
     if sheet not in ("AFS", "TOP HAT", "UNISHELL") or not fixture:
         return jsonify(items=[])
-
     rows = sb_get({
         "select": "*",
         "sheet": f"eq.{sheet}",
         "fixture_no": f"eq.{fixture}",
         "order": "id.asc"
     })
-
     fixture_buildable = calc_fixture_buildable(rows)
-
     for row in rows:
         row["balance"] = calc_balance(row)
         row["buildable"] = fixture_buildable
-
     return jsonify(items=rows)
 
-
-# ---------------- RECEIVE ADD / REMOVE ----------------
 
 @app.post("/api/receive")
 @require_login
 def api_receive():
-
     data = request.get_json(silent=True) or {}
-
     row_id = data.get("id")
     action = data.get("action")
-
     try:
         qty = float(data.get("qty") or 0)
     except:
         qty = 0
-
     if not row_id or qty <= 0 or action not in ("add", "remove"):
         return jsonify(error="Enter a valid quantity"), 400
-
-    rows = sb_get({
-        "select": "*",
-        "id": f"eq.{row_id}"
-    })
-
+    rows = sb_get({"select": "*", "id": f"eq.{row_id}"})
     if not rows:
         return jsonify(error="Item not found"), 404
-
     row = rows[0]
-
     old_received = float(row.get("received") or 0)
-
     if action == "add":
         new_received = old_received + qty
     else:
         new_received = max(0, old_received - qty)
-
-    updated = sb_patch(
-        row_id,
-        {"received": new_received}
-    )[0]
-
-    # Recalculate fixture-wide buildable
+    updated = sb_patch(row_id, {"received": new_received})[0]
     fixture_rows = sb_get({
         "select": "*",
         "sheet": f"eq.{updated['sheet']}",
         "fixture_no": f"eq.{updated['fixture_no']}"
     })
-
     fixture_buildable = calc_fixture_buildable(fixture_rows)
-
     return jsonify(
         ok=True,
         received=new_received,
@@ -303,65 +243,34 @@ def api_receive():
     )
 
 
-# ---------------- ADMIN UPDATE ----------------
-
 @app.post("/api/admin/update")
 @require_admin
 def api_admin_update():
-
     data = request.get_json(silent=True) or {}
-
     row_id = data.get("id")
-
-    keys = [
-        "fixture_no",
-        "item_no",
-        "description",
-        "bom_qty",
-        "no_of_sets",
-        "total_qty",
-        "received",
-        "status"
-    ]
-
-    patch = {
-        key: data[key]
-        for key in keys
-        if key in data
-    }
-
+    keys = ["fixture_no", "item_no", "description", "bom_qty", "no_of_sets", "total_qty", "received", "status"]
+    patch = {key: data[key] for key in keys if key in data}
     if not row_id or not patch:
         return jsonify(error="Nothing to update"), 400
-
     for key in ("bom_qty", "no_of_sets", "total_qty", "received"):
         if key in patch:
             try:
                 patch[key] = float(patch[key] or 0)
             except:
                 patch[key] = 0
-
     if "received" in patch:
         patch["received"] = max(0, patch["received"])
-
     sb_patch(row_id, patch)
-
     return jsonify(ok=True)
 
-
-# ---------------- ADMIN ADD ----------------
 
 @app.post("/api/admin/add")
 @require_admin
 def api_admin_add():
-
     data = request.get_json(silent=True) or {}
-
     for key in ("sheet", "fixture_no", "item_no"):
         if not str(data.get(key, "")).strip():
-            return jsonify(
-                error=f"{key} is required"
-            ), 400
-
+            return jsonify(error=f"{key} is required"), 400
     row = {
         "sheet": data["sheet"],
         "fixture_no": str(data["fixture_no"]).strip(),
@@ -370,172 +279,80 @@ def api_admin_add():
         "bom_qty": float(data.get("bom_qty") or 0),
         "no_of_sets": float(data.get("no_of_sets") or 0),
         "total_qty": float(data.get("total_qty") or 0),
-        "received": max(
-            0,
-            float(data.get("received") or 0)
-        ),
+        "received": max(0, float(data.get("received") or 0)),
         "status": data.get("status", "")
     }
-
     sb_insert(row)
-
     return jsonify(ok=True)
 
-
-# ---------------- ADMIN DELETE ----------------
 
 @app.delete("/api/admin/delete/<int:row_id>")
 @require_admin
 def api_admin_delete(row_id):
-
     sb_delete(row_id)
-
     return jsonify(ok=True)
 
-
-# ---------------- EXCEL EXPORT ----------------
 
 @app.get("/api/export")
 @require_login
 def export_excel():
-
-    template = os.path.join(
-        os.path.dirname(__file__),
-        "CORVA_TRACKER_TEMPLATE.xlsx"
-    )
-
+    template = os.path.join(os.path.dirname(__file__), "CORVA_TRACKER_TEMPLATE.xlsx")
     wb = load_workbook(template)
-
-    all_rows = sb_get({
-        "select": "*",
-        "order": "id.asc"
-    })
-
+    all_rows = sb_get({"select": "*", "order": "id.asc"})
     by_key = {
-        (
-            str(row["sheet"]),
-            str(row["fixture_no"]).strip(),
-            str(row["item_no"]).strip()
-        ): row
+        (str(row["sheet"]), str(row["fixture_no"]).strip(), str(row["item_no"]).strip()): row
         for row in all_rows
     }
-
-    # Fixture-wide buildable values
     fixture_groups = {}
-
     for row in all_rows:
-        key = (
-            str(row["sheet"]),
-            str(row["fixture_no"]).strip()
-        )
-
+        key = (str(row["sheet"]), str(row["fixture_no"]).strip())
         fixture_groups.setdefault(key, []).append(row)
-
-    fixture_buildable = {
-        key: calc_fixture_buildable(rows)
-        for key, rows in fixture_groups.items()
-    }
+    fixture_buildable = {key: calc_fixture_buildable(rows) for key, rows in fixture_groups.items()}
 
     for ws in wb.worksheets:
-
-        if ws.title not in (
-            "AFS",
-            "TOP HAT",
-            "UNISHELL"
-        ):
+        if ws.title not in ("AFS", "TOP HAT", "UNISHELL"):
             continue
-
         last_fixture = None
-
         total_col = 8 if ws.title == "AFS" else 7
         received_col = 9 if ws.title == "AFS" else 8
         balance_col = 10 if ws.title == "AFS" else 9
         buildable_col = 11 if ws.title == "AFS" else 10
         status_col = 12 if ws.title == "AFS" else 11
-
         for r in range(4, ws.max_row + 1):
-
             fixture_value = ws.cell(r, 2).value
-
             if fixture_value not in (None, ""):
-                last_fixture = str(
-                    fixture_value
-                ).strip()
-
+                last_fixture = str(fixture_value).strip()
             item_value = ws.cell(r, 3).value
-
-            if (
-                item_value in (None, "")
-                or last_fixture is None
-            ):
+            if item_value in (None, "") or last_fixture is None:
                 continue
-
-            key = (
-                ws.title,
-                last_fixture,
-                str(item_value).strip()
-            )
-
+            key = (ws.title, last_fixture, str(item_value).strip())
             row = by_key.get(key)
-
             if not row:
                 continue
-
-            # Master data
             ws.cell(r, 2).value = row.get("fixture_no")
             ws.cell(r, 3).value = row.get("item_no")
             ws.cell(r, 4).value = row.get("description")
             ws.cell(r, 5).value = row.get("bom_qty")
             ws.cell(r, 6).value = row.get("no_of_sets")
-
-            ws.cell(r, total_col).value = row.get(
-                "total_qty"
-            )
-
-            ws.cell(r, received_col).value = row.get(
-                "received"
-            )
-
-            ws.cell(r, balance_col).value = calc_balance(
-                row
-            )
-
-            fixture_key = (
-                ws.title,
-                last_fixture
-            )
-
-            ws.cell(r, buildable_col).value = fixture_buildable.get(
-                fixture_key,
-                0
-            )
-
-            ws.cell(r, status_col).value = (
-                row.get("status") or ""
-            )
-
+            ws.cell(r, total_col).value = row.get("total_qty")
+            ws.cell(r, received_col).value = row.get("received")
+            ws.cell(r, balance_col).value = calc_balance(row)
+            ws.cell(r, buildable_col).value = fixture_buildable.get((ws.title, last_fixture), 0)
+            ws.cell(r, status_col).value = row.get("status") or ""
         ws.sheet_view.showGridLines = False
 
     wb.calculation.fullCalcOnLoad = True
     wb.calculation.forceFullCalc = True
-
     output = io.BytesIO()
-
     wb.save(output)
     output.seek(0)
-
     return send_file(
         output,
         as_attachment=True,
         download_name="CORVA_FIXTURE_TRACKER_UPDATED.xlsx",
-        mimetype=(
-            "application/vnd.openxmlformats-officedocument."
-            "spreadsheetml.sheet"
-        )
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-
-# ---------------- HEALTH ----------------
 
 @app.get("/health")
 def health():
@@ -543,7 +360,4 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", 5000))
-    )
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))

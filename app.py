@@ -33,8 +33,7 @@ def buildable(rows):
  vals=[]
  for x in rows:
   bom=float(x.get('bom_qty') or 0);received=float(x.get('received') or 0)
-  if bom>0:
-   vals.append(math.floor(received/bom))
+  if bom>0: vals.append(math.floor(received/bom))
  return min(vals) if vals else 0
 
 def admin_account():
@@ -121,28 +120,83 @@ def fixture_numbers():
  rows=get('fixtures',{'select':'fixture_no','sheet':f'eq.{s}','order':'fixture_no.asc'});return jsonify(fixtures=sorted({str(x.get('fixture_no','')).strip() for x in rows if str(x.get('fixture_no','')).strip()}))
 @app.post('/api/receive')
 def receive():
- d=request.get_json(silent=True) or {};i=d.get('id');act=d.get('action')
+ d=request.get_json(silent=True) or {};i=d.get('id')
  try:q=float(d.get('qty') or 0)
  except Exception:q=0
- if not i or q<=0 or act not in ('add','remove'):return jsonify(error='Enter a valid quantity'),400
+ if not i or q<=0:return jsonify(error='Enter a valid quantity'),400
  rows=get('fixtures',{'select':'*','id':f'eq.{i}'})
  if not rows:return jsonify(error='Item not found'),404
- x=rows[0];n=float(x.get('received') or 0)+q if act=='add' else max(0,float(x.get('received') or 0)-q);u=update_where('fixtures',{'id':f'eq.{i}'},{'received':n})[0]
+ x=rows[0];before=float(x.get('received') or 0);n=before+q
+ u=update_where('fixtures',{'id':f'eq.{i}'},{'received':n})[0]
+ try:
+  insert('receiving_history',{'fixture_id':u['id'],'sheet':u['sheet'],'fixture_no':u['fixture_no'],'item_no':u['item_no'],'description':u.get('description') or '','action':'add','qty':q,'received_before':before,'received_after':n})
+ except Exception:
+  # Keep receiving update successful even if history has a temporary database issue.
+  pass
  fr=get('fixtures',{'select':'*','sheet':f"eq.{u['sheet']}",'fixture_no':f"eq.{u['fixture_no']}"});return jsonify(ok=True,received=n,balance=balance(u),buildable=buildable(fr))
+@app.get('/api/receiving-history')
+def receiving_history():
+ s=request.args.get('sheet','').strip();f=request.args.get('fixture','').strip();date=request.args.get('date','').strip();limit=request.args.get('limit','100')
+ p={'select':'*','order':'created_at.desc','limit':limit}
+ if s in ('AFS','TOP HAT','UNISHELL'):p['sheet']=f'eq.{s}'
+ if f:p['fixture_no']=f'eq.{f}'
+ if date:
+  try:
+   start=datetime.fromisoformat(date).replace(tzinfo=timezone.utc);end=start+timedelta(days=1)
+   p['created_at']=f'gte.{start.isoformat()}';p['created_at_2']=f'lt.{end.isoformat()}'
+  except Exception:pass
+ # PostgREST cannot use the same column twice through this helper's dict; build date query directly when requested.
+ if date:
+  try:
+   start=datetime.fromisoformat(date).replace(tzinfo=timezone.utc);end=start+timedelta(days=1)
+   base=f'{SUPABASE_URL}/rest/v1/receiving_history';params={'select':'*','order':'created_at.desc','limit':limit,'created_at':f'gte.{start.isoformat()}','and':f'(created_at.lt.{end.isoformat()})'}
+   if s in ('AFS','TOP HAT','UNISHELL'):params['sheet']=f'eq.{s}'
+   if f:params['fixture_no']=f'eq.{f}'
+   r=requests.get(base,headers=hdr(),params=params,timeout=20);r.raise_for_status();rows=r.json()
+  except Exception:return jsonify(items=[])
+ else: rows=get('receiving_history',p)
+ return jsonify(items=rows)
+@app.post('/api/admin/fixture-sets')
+@require_admin
+def admin_fixture_sets():
+ d=request.get_json(silent=True) or {};s=str(d.get('sheet','')).strip();f=str(d.get('fixture_no','')).strip()
+ try:sets=float(d.get('no_of_sets') or 0)
+ except Exception:sets=0
+ if s not in ('AFS','TOP HAT','UNISHELL') or not f or sets<0:return jsonify(error='Enter a valid fixture and No. of Sets.'),400
+ rows=get('fixtures',{'select':'*','sheet':f'eq.{s}','fixture_no':f'eq.{f}'})
+ if not rows:return jsonify(error='Fixture not found'),404
+ for x in rows:
+  bom=float(x.get('bom_qty') or 0);total=max(0,bom*sets)
+  update_where('fixtures',{'id':f"eq.{x['id']}"},{'no_of_sets':sets,'total_qty':total})
+ return jsonify(ok=True,no_of_sets=sets,updated_items=len(rows))
 @app.post('/api/admin/update')
 @require_admin
 def admin_update():
  d=request.get_json(silent=True) or {};i=d.get('id');keys=['fixture_no','item_no','description','material','bom_qty','no_of_sets','total_qty','received','status'];p={k:d[k] for k in keys if k in d}
  if not i or not p:return jsonify(error='Nothing to update'),400
+ rows=get('fixtures',{'select':'*','id':f'eq.{i}'})
+ if not rows:return jsonify(error='Item not found'),404
+ old=rows[0]
  for k in ('bom_qty','no_of_sets','total_qty','received'):
   if k in p:
    try:p[k]=float(p[k] or 0)
    except Exception:p[k]=0
  if 'received' in p:p['received']=max(0,p['received'])
+ if 'no_of_sets' in p:
+  p['total_qty']=max(0,float(p.get('bom_qty',old.get('bom_qty') or 0))*p['no_of_sets'])
+ elif 'bom_qty' in p:
+  p['total_qty']=max(0,p['bom_qty']*float(old.get('no_of_sets') or 0))
+ elif 'total_qty' in p:p['total_qty']=max(0,p['total_qty'])
  if 'no_of_sets' in p or 'bom_qty' in p:
-  bom=float(p.get('bom_qty') or 0);sets=float(p.get('no_of_sets') or 0);p['total_qty']=max(0,bom*sets)
- if 'total_qty' in p:p['total_qty']=max(0,float(p['total_qty']))
- update_where('fixtures',{'id':f'eq.{i}'},p);return jsonify(ok=True,total_qty=p.get('total_qty'))
+  target_sheet=str(old.get('sheet'));target_fixture=str(old.get('fixture_no')).strip()
+  rows2=get('fixtures',{'select':'*','sheet':f'eq.{target_sheet}','fixture_no':f'eq.{target_fixture}'})
+  sets=float(p.get('no_of_sets',old.get('no_of_sets') or 0))
+  for r in rows2:
+   patch={'total_qty':max(0,float(p.get('bom_qty',r.get('bom_qty') or 0))*sets),'no_of_sets':sets}
+   if r['id']==i: patch.update({k:v for k,v in p.items() if k not in ('total_qty','no_of_sets')})
+   update_where('fixtures',{'id':f"eq.{r['id']}"},patch)
+ else:update_where('fixtures',{'id':f'eq.{i}'},p)
+ return jsonify(ok=True,total_qty=p.get('total_qty'))
 @app.post('/api/admin/add')
 @require_admin
 def admin_add():

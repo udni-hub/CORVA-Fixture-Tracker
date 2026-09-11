@@ -9,7 +9,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash,check_password_hash
 load_dotenv()
 app=Flask(__name__)
-app.config.update(SECRET_KEY=os.getenv('FLASK_SECRET') or 'change-this-secret',SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE='Lax')
+app.config.update(SECRET_KEY=os.getenv('FLASK_SECRET') or 'change-this-secret',SESSION_COOKIE_NAME='corva_admin_session_v2',SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE='Lax')
 app.wsgi_app=ProxyFix(app.wsgi_app,x_proto=1,x_host=1)
 SUPABASE_URL=os.getenv('SUPABASE_URL','').rstrip('/')
 SUPABASE_KEY=os.getenv('SUPABASE_SERVICE_KEY','')

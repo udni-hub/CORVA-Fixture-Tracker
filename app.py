@@ -32,11 +32,9 @@ def balance(x): return max(0,float(x.get('total_qty') or 0)-float(x.get('receive
 def buildable(rows):
  vals=[]
  for x in rows:
-  bom=float(x.get('bom_qty') or 0);received=float(x.get('received') or 0);sets=float(x.get('no_of_sets') or 0)
+  bom=float(x.get('bom_qty') or 0);received=float(x.get('received') or 0)
   if bom>0:
-   possible=math.floor(received/bom)
-   if sets>0: possible=min(possible,math.floor(sets))
-   vals.append(possible)
+   vals.append(math.floor(received/bom))
  return min(vals) if vals else 0
 
 def admin_account():

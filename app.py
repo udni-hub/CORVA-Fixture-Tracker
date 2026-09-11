@@ -9,7 +9,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash,check_password_hash
 load_dotenv()
 app=Flask(__name__)
-app.config.update(SECRET_KEY=os.getenv('FLASK_SECRET') or 'change-this-secret',SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE='Lax')
+app.config.update(SECRET_KEY=os.getenv('FLASK_SECRET') or 'change-this-secret',SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE='Lax',PERMANENT_SESSION_LIFETIME=timedelta(days=30),SESSION_REFRESH_EACH_REQUEST=True)
 app.wsgi_app=ProxyFix(app.wsgi_app,x_proto=1,x_host=1)
 SUPABASE_URL=os.getenv('SUPABASE_URL','').rstrip('/')
 SUPABASE_KEY=os.getenv('SUPABASE_SERVICE_KEY','')
@@ -53,6 +53,12 @@ def require_admin(f):
   return f(*a,**k)
  return w
 
+@app.after_request
+def security_headers(r):
+ r.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0'
+ r.headers['Pragma']='no-cache'
+ return r
+
 @app.get('/')
 def home(): return render_template('index.html',role=session.get('role','user'),username=session.get('user','User'))
 @app.get('/login')
@@ -66,7 +72,7 @@ def api_login():
   a=admin_account();valid=check_password_hash(a['password_hash'],p) if a else (p==ADMIN_PASSWORD)
  except Exception: valid=(p==ADMIN_PASSWORD)
  if valid:
-  session.clear();session['user']=u;session['role']='admin';return jsonify(ok=True,role='admin')
+  session.clear();session.permanent=True;session['user']=u;session['role']='admin';return jsonify(ok=True,role='admin')
  return jsonify(ok=False,error='Invalid admin credentials'),401
 
 @app.post('/api/forgot/request')

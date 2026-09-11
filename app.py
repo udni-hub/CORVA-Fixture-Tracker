@@ -120,36 +120,31 @@ def fixture_numbers():
  rows=get('fixtures',{'select':'fixture_no','sheet':f'eq.{s}','order':'fixture_no.asc'});return jsonify(fixtures=sorted({str(x.get('fixture_no','')).strip() for x in rows if str(x.get('fixture_no','')).strip()}))
 @app.post('/api/receive')
 def receive():
- d=request.get_json(silent=True) or {};i=d.get('id')
+ d=request.get_json(silent=True) or {};i=d.get('id');action=str(d.get('action','add')).strip().lower()
  try:q=float(d.get('qty') or 0)
  except Exception:q=0
- if not i or q<=0:return jsonify(error='Enter a valid quantity'),400
+ if not i or q<=0 or action not in ('add','remove'):return jsonify(error='Enter a valid quantity and action'),400
  rows=get('fixtures',{'select':'*','id':f'eq.{i}'})
  if not rows:return jsonify(error='Item not found'),404
- x=rows[0];before=float(x.get('received') or 0);n=before+q
+ x=rows[0];before=float(x.get('received') or 0)
+ n=before+q if action=='add' else max(0,before-q)
  u=update_where('fixtures',{'id':f'eq.{i}'},{'received':n})[0]
- try:
-  insert('receiving_history',{'fixture_id':u['id'],'sheet':u['sheet'],'fixture_no':u['fixture_no'],'item_no':u['item_no'],'description':u.get('description') or '','action':'add','qty':q,'received_before':before,'received_after':n})
- except Exception:
-  # Keep receiving update successful even if history has a temporary database issue.
-  pass
- fr=get('fixtures',{'select':'*','sheet':f"eq.{u['sheet']}",'fixture_no':f"eq.{u['fixture_no']}"});return jsonify(ok=True,received=n,balance=balance(u),buildable=buildable(fr))
+ if action=='add':
+  try:
+   insert('receiving_history',{'fixture_id':u['id'],'sheet':u['sheet'],'fixture_no':u['fixture_no'],'item_no':u['item_no'],'description':u.get('description') or '','action':'add','qty':q,'received_before':before,'received_after':n})
+  except Exception:
+   pass
+ fr=get('fixtures',{'select':'*','sheet':f"eq.{u['sheet']}",'fixture_no':f"eq.{u['fixture_no']}"});return jsonify(ok=True,action=action,received=n,balance=balance(u),buildable=buildable(fr))
 @app.get('/api/receiving-history')
 def receiving_history():
  s=request.args.get('sheet','').strip();f=request.args.get('fixture','').strip();date=request.args.get('date','').strip();limit=request.args.get('limit','100')
- p={'select':'*','order':'created_at.desc','limit':limit}
+ p={'select':'*','action':'eq.add','order':'created_at.desc','limit':limit}
  if s in ('AFS','TOP HAT','UNISHELL'):p['sheet']=f'eq.{s}'
  if f:p['fixture_no']=f'eq.{f}'
  if date:
   try:
    start=datetime.fromisoformat(date).replace(tzinfo=timezone.utc);end=start+timedelta(days=1)
-   p['created_at']=f'gte.{start.isoformat()}';p['created_at_2']=f'lt.{end.isoformat()}'
-  except Exception:pass
- # PostgREST cannot use the same column twice through this helper's dict; build date query directly when requested.
- if date:
-  try:
-   start=datetime.fromisoformat(date).replace(tzinfo=timezone.utc);end=start+timedelta(days=1)
-   base=f'{SUPABASE_URL}/rest/v1/receiving_history';params={'select':'*','order':'created_at.desc','limit':limit,'created_at':f'gte.{start.isoformat()}','and':f'(created_at.lt.{end.isoformat()})'}
+   base=f'{SUPABASE_URL}/rest/v1/receiving_history';params={'select':'*','action':'eq.add','order':'created_at.desc','limit':limit,'created_at':f'gte.{start.isoformat()}','and':f'(created_at.lt.{end.isoformat()})'}
    if s in ('AFS','TOP HAT','UNISHELL'):params['sheet']=f'eq.{s}'
    if f:params['fixture_no']=f'eq.{f}'
    r=requests.get(base,headers=hdr(),params=params,timeout=20);r.raise_for_status();rows=r.json()

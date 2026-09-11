@@ -147,14 +147,19 @@ def admin_update():
    try:p[k]=float(p[k] or 0)
    except Exception:p[k]=0
  if 'received' in p:p['received']=max(0,p['received'])
- update_where('fixtures',{'id':f'eq.{i}'},p);return jsonify(ok=True)
+ if 'no_of_sets' in p or 'bom_qty' in p:
+  bom=float(p.get('bom_qty') or 0)
+  sets=float(p.get('no_of_sets') or 0)
+  p['total_qty']=bom*sets
+ if 'total_qty' in p:p['total_qty']=max(0,float(p['total_qty']))
+ update_where('fixtures',{'id':f'eq.{i}'},p);return jsonify(ok=True,total_qty=p.get('total_qty'))
 
 @app.post('/api/admin/add')
 @require_admin
 def admin_add():
  d=request.get_json(silent=True) or {}
  if any(not str(d.get(k,'')).strip() for k in ('sheet','fixture_no','item_no')):return jsonify(error='Sheet, Fixture No and Item No are required'),400
- x={'sheet':d['sheet'],'fixture_no':str(d['fixture_no']).strip(),'item_no':str(d['item_no']).strip(),'description':d.get('description',''),'bom_qty':float(d.get('bom_qty') or 0),'no_of_sets':float(d.get('no_of_sets') or 0),'total_qty':float(d.get('total_qty') or 0),'received':max(0,float(d.get('received') or 0)),'status':d.get('status','')};insert('fixtures',x);return jsonify(ok=True)
+ bom=float(d.get('bom_qty') or 0);sets=float(d.get('no_of_sets') or 0);x={'sheet':d['sheet'],'fixture_no':str(d['fixture_no']).strip(),'item_no':str(d['item_no']).strip(),'description':d.get('description',''),'bom_qty':bom,'no_of_sets':sets,'total_qty':bom*sets,'received':max(0,float(d.get('received') or 0)),'status':d.get('status','')};insert('fixtures',x);return jsonify(ok=True)
 
 @app.delete('/api/admin/delete/<int:i>')
 @require_admin

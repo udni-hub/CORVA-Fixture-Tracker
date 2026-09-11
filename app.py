@@ -28,9 +28,15 @@ def update_where(t,params,d):
  r=requests.patch(f'{SUPABASE_URL}/rest/v1/{t}',headers={**hdr(),'Prefer':'return=representation'},params=params,json=d,timeout=20);r.raise_for_status();return r.json()
 def delete_where(t,params):
  r=requests.delete(f'{SUPABASE_URL}/rest/v1/{t}',headers=hdr(),params=params,timeout=20);r.raise_for_status()
-def balance(x): return float(x.get('total_qty') or 0)-float(x.get('received') or 0)
+def balance(x): return max(0,float(x.get('total_qty') or 0)-float(x.get('received') or 0))
 def buildable(rows):
- vals=[math.floor(float(x.get('received') or 0)/float(x.get('bom_qty') or 0)) for x in rows if float(x.get('bom_qty') or 0)>0]
+ vals=[]
+ for x in rows:
+  bom=float(x.get('bom_qty') or 0);received=float(x.get('received') or 0);sets=float(x.get('no_of_sets') or 0)
+  if bom>0:
+   possible=math.floor(received/bom)
+   if sets>0: possible=min(possible,math.floor(sets))
+   vals.append(possible)
  return min(vals) if vals else 0
 
 def admin_account():
@@ -148,9 +154,7 @@ def admin_update():
    except Exception:p[k]=0
  if 'received' in p:p['received']=max(0,p['received'])
  if 'no_of_sets' in p or 'bom_qty' in p:
-  bom=float(p.get('bom_qty') or 0)
-  sets=float(p.get('no_of_sets') or 0)
-  p['total_qty']=bom*sets
+  bom=float(p.get('bom_qty') or 0);sets=float(p.get('no_of_sets') or 0);p['total_qty']=max(0,bom*sets)
  if 'total_qty' in p:p['total_qty']=max(0,float(p['total_qty']))
  update_where('fixtures',{'id':f'eq.{i}'},p);return jsonify(ok=True,total_qty=p.get('total_qty'))
 

@@ -50,11 +50,13 @@ def require_admin(f):
   return f(*a,**k)
  return w
 
+REVISION_UI='''<script>(function(){const oldRender=window.render;window.render=function(items){oldRender(items);document.querySelectorAll(".item").forEach(function(card,i){const x=items[i]||{};const meta=card.querySelector(".meta");if(meta&&!meta.querySelector(".revisionBox")){const b=document.createElement("div");b.className="metaBox revisionBox";b.innerHTML="<b>REVISION</b>"+(x.revision??1);meta.appendChild(b)}if(window.ADMIN){const box=card.querySelector(".adminbox");if(box&&!box.querySelector(".revisionField")){const fields=box.querySelector(".adminfields");const f=document.createElement("div");f.className="adminfield revisionField";f.innerHTML="<label>Revision</label><input id=\\"erev"+x.id+"\\" value=\\""+(x.revision??1)+"\\" type=\\"number\\" min=\\"1\\" step=\\"1\\">";fields.appendChild(f)}}});};const oldSave=window.saveAdmin;window.saveAdmin=async function(id){let data={id:id,fixture_no:$("efix"+id).value,item_no:$("eitem"+id).value,description:$("edesc"+id).value,material:$("emat"+id).value,bom_qty:$("ebom"+id).value,no_of_sets:$("esets"+id).value,total_qty:$("etotal"+id).value,received:$("erec"+id).value,status:$("estatus"+id).value,revision:$("erev"+id).value};let r=await fetch('/api/admin/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});let x=await r.json();show(r.ok?'Admin update saved.':(x.error||'Admin update failed'));if(r.ok)searchItems()};const addModal=document.getElementById('addModal');if(addModal){const fields=addModal.querySelector('.addfields');const status=fields.querySelector('#addstatus');if(status&&!document.getElementById('addrevision')){const w=document.createElement('div');w.innerHTML='<span class="label">REVISION</span><input id="addrevision" type="number" min="1" step="1" value="1">';status.parentElement.insertAdjacentElement('beforebegin',w)}}const oldAdd=window.addItem;window.addItem=async function(){let d={sheet:$("addsheet").value,fixture_no:$("addfixture").value,item_no:$("additem").value,description:$("adddesc").value,material:$("addmaterial").value,bom_qty:$("addbom").value,no_of_sets:$("addsets").value,received:$("addrec").value,status:$("addstatus").value,revision:$("addrevision")?$("addrevision").value:1};let r=await fetch('/api/admin/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});let x=await r.json();$("addmsg").textContent=r.ok?'Item added.':(x.error||'Add failed');if(r.ok){closeAdd();searchItems()}}})();</script>'''
+
 @app.after_request
 def security_headers(r):
  r.headers['Cache-Control']='no-store, no-cache, must-revalidate, max-age=0';r.headers['Pragma']='no-cache';return r
 @app.get('/')
-def home(): return render_template('index.html',role=session.get('role','user'),username=session.get('user','User'))
+def home(): return render_template('index.html',role=session.get('role','user'),username=session.get('user','User'))+REVISION_UI
 @app.get('/login')
 def login(): return redirect(url_for('home'))
 @app.post('/api/login')
@@ -111,7 +113,7 @@ def fixtures():
  s=request.args.get('sheet','').strip();f=request.args.get('fixture','').strip()
  if s not in ('AFS','TOP HAT','UNISHELL') or not f:return jsonify(items=[])
  rows=get('fixtures',{'select':'*','sheet':f'eq.{s}','fixture_no':f'eq.{f}','order':'id.asc'});b=buildable(rows)
- for x in rows:x['balance']=balance(x);x['buildable']=b
+ for x in rows:x['balance']=balance(x);x['buildable']=b;x['revision']=int(x.get('revision') or 1)
  return jsonify(items=rows)
 @app.get('/api/fixture-numbers')
 def fixture_numbers():
@@ -167,15 +169,16 @@ def admin_fixture_sets():
 @app.post('/api/admin/update')
 @require_admin
 def admin_update():
- d=request.get_json(silent=True) or {};i=d.get('id');keys=['fixture_no','item_no','description','material','bom_qty','no_of_sets','total_qty','received','status'];p={k:d[k] for k in keys if k in d}
+ d=request.get_json(silent=True) or {};i=d.get('id');keys=['fixture_no','item_no','description','material','bom_qty','no_of_sets','total_qty','received','status','revision'];p={k:d[k] for k in keys if k in d}
  if not i or not p:return jsonify(error='Nothing to update'),400
  rows=get('fixtures',{'select':'*','id':f'eq.{i}'})
  if not rows:return jsonify(error='Item not found'),404
  old=rows[0]
- for k in ('bom_qty','no_of_sets','total_qty','received'):
+ for k in ('bom_qty','no_of_sets','total_qty','received','revision'):
   if k in p:
    try:p[k]=float(p[k] or 0)
    except Exception:p[k]=0
+ if 'revision' in p:p['revision']=max(1,int(p['revision']))
  if 'received' in p:p['received']=max(0,p['received'])
  if 'no_of_sets' in p:
   p['total_qty']=max(0,float(p.get('bom_qty',old.get('bom_qty') or 0))*p['no_of_sets'])
@@ -197,7 +200,7 @@ def admin_update():
 def admin_add():
  d=request.get_json(silent=True) or {}
  if any(not str(d.get(k,'')).strip() for k in ('sheet','fixture_no','item_no')):return jsonify(error='Sheet, Fixture No and Item No are required'),400
- bom=float(d.get('bom_qty') or 0);sets=float(d.get('no_of_sets') or 0);x={'sheet':d['sheet'],'fixture_no':str(d['fixture_no']).strip(),'item_no':str(d['item_no']).strip(),'description':d.get('description',''),'material':d.get('material',''),'bom_qty':bom,'no_of_sets':sets,'total_qty':bom*sets,'received':max(0,float(d.get('received') or 0)),'status':d.get('status','')};insert('fixtures',x);return jsonify(ok=True)
+ bom=float(d.get('bom_qty') or 0);sets=float(d.get('no_of_sets') or 0);rev=max(1,int(float(d.get('revision') or 1)));x={'sheet':d['sheet'],'fixture_no':str(d['fixture_no']).strip(),'item_no':str(d['item_no']).strip(),'description':d.get('description',''),'material':d.get('material',''),'bom_qty':bom,'no_of_sets':sets,'total_qty':bom*sets,'received':max(0,float(d.get('received') or 0)),'status':d.get('status',''),'revision':rev};insert('fixtures',x);return jsonify(ok=True)
 @app.delete('/api/admin/delete/<int:i>')
 @require_admin
 def admin_delete(i):delete_where('fixtures',{'id':f'eq.{i}'});return jsonify(ok=True)
@@ -209,13 +212,15 @@ def export():
  for ws in wb.worksheets:
   if ws.title not in ('AFS','TOP HAT','UNISHELL'):continue
   last=None;tc=8 if ws.title=='AFS' else 7;rc=9 if ws.title=='AFS' else 8;bc=10 if ws.title=='AFS' else 9;fc=11 if ws.title=='AFS' else 10;sc=12 if ws.title=='AFS' else 11
+  revc=sc+1
+  ws.cell(3,revc).value='REVISION'
   for r in range(4,ws.max_row+1):
    if ws.cell(r,2).value not in (None,''):last=str(ws.cell(r,2).value).strip()
    iv=ws.cell(r,3).value
    if iv in (None,'') or last is None:continue
    x=by.get((ws.title,last,str(iv).strip()))
    if not x:continue
-   ws.cell(r,2).value=x['fixture_no'];ws.cell(r,3).value=x['item_no'];ws.cell(r,4).value=x.get('description');ws.cell(r,5).value=x.get('bom_qty');ws.cell(r,6).value=x.get('no_of_sets');ws.cell(r,tc).value=x.get('total_qty');ws.cell(r,rc).value=x.get('received');ws.cell(r,bc).value=balance(x);ws.cell(r,fc).value=fb.get((ws.title,last),0);ws.cell(r,sc).value=x.get('status') or ''
+   ws.cell(r,2).value=x['fixture_no'];ws.cell(r,3).value=x['item_no'];ws.cell(r,4).value=x.get('description');ws.cell(r,5).value=x.get('bom_qty');ws.cell(r,6).value=x.get('no_of_sets');ws.cell(r,tc).value=x.get('total_qty');ws.cell(r,rc).value=x.get('received');ws.cell(r,bc).value=balance(x);ws.cell(r,fc).value=fb.get((ws.title,last),0);ws.cell(r,sc).value=x.get('status') or '';ws.cell(r,revc).value=int(x.get('revision') or 1)
  out=io.BytesIO();wb.save(out);out.seek(0);return send_file(out,as_attachment=True,download_name='CORVA_FIXTURE_TRACKER_UPDATED.xlsx',mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 @app.get('/health')
 def health():return 'OK'
